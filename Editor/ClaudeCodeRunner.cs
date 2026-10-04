@@ -511,15 +511,21 @@ namespace ClaudeHelper
             return null;
         }
 
+        public static bool LooksLikeSignInProblem(string problem)
+        {
+            var text = (problem ?? "").ToLowerInvariant();
+            return text.Contains("login") || text.Contains("log in") || text.Contains("authenticat") || text.Contains("api key");
+        }
+
         static string Hint(string problem)
         {
             var text = problem.ToLowerInvariant();
-            if (text.Contains("login") || text.Contains("log in") || text.Contains("authenticat") || text.Contains("api key"))
-                return "\n\nTip: open a terminal, run \"claude\" once, and sign in with your Claude account. Then ask again.";
+            if (LooksLikeSignInProblem(problem))
+                return "\n\nTip: press Sign in at the top of this window and sign in with your Claude account. Then ask again.";
             if (text.Contains("usage limit") || text.Contains("rate limit") || text.Contains("limit reached"))
                 return "\n\nTip: you may have reached your plan's usage limit. Wait a while, then try again.";
             if (text.Contains("is not recognized"))
-                return "\n\nTip: check the path to claude.exe in Settings (top right of this window).";
+                return "\n\nTip: check the path to Claude Code in Settings (top right of this window), or leave it empty to find it automatically.";
             if (text.Contains("auto mode") || text.Contains("permission-mode") || text.Contains("permission mode"))
                 return "\n\nTip: this window runs Claude Code in auto mode. Check that auto mode is available for your account by running \"claude\" in a terminal.";
             return "";

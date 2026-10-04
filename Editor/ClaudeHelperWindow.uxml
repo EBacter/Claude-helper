@@ -11,11 +11,20 @@
         </uie:Toolbar>
         <ui:VisualElement name="settingsPanel" class="settings-panel hidden">
             <ui:VisualElement class="settings-row">
-                <ui:TextField name="claudePathField" label="Path to claude.exe" class="claude-path-field" />
+                <ui:TextField name="claudePathField" label="Path to Claude Code" class="claude-path-field" tooltip="Leave empty to find Claude Code automatically." />
                 <ui:Button name="browseButton" text="Browse..." />
             </ui:VisualElement>
             <ui:DropdownField name="modelField" label="Model" class="model-field" tooltip="Which Claude model answers. Faster models reply sooner and use less of your plan, but may handle bigger changes less well." />
             <ui:Label class="settings-hint" text="Claude Code runs from this project folder using your Claude subscription (no API key), with all its tools, your settings, skills and MCP servers, in auto mode." />
+        </ui:VisualElement>
+        <ui:VisualElement name="setupPanel" class="setup-panel hidden">
+            <ui:Label class="setup-title" text="Set up Claude Code" />
+            <ui:Label name="setupText" class="setup-text" />
+            <ui:VisualElement class="setup-buttons">
+                <ui:Button name="installButton" text="1. Install Claude Code" />
+                <ui:Button name="signInButton" text="2. Sign in" />
+                <ui:Button name="checkSetupButton" text="Check again" />
+            </ui:VisualElement>
         </ui:VisualElement>
         <ui:TwoPaneSplitView name="splitView" class="split-view" orientation="Vertical" fixed-pane-index="1" fixed-pane-initial-dimension="110" view-data-key="claudeHelperSplitView">
             <ui:VisualElement class="chat-pane">

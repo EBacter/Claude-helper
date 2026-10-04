@@ -48,6 +48,32 @@
     margin-top: 4px;
 }
 
+.setup-panel {
+    padding: 8px;
+    border-bottom-width: 1px;
+    border-color: rgba(64, 128, 255, 0.45);
+    background-color: rgba(64, 128, 255, 0.15);
+}
+
+.setup-title {
+    -unity-font-style: bold;
+    margin-bottom: 4px;
+}
+
+.setup-text {
+    white-space: normal;
+}
+
+.setup-buttons {
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+
+.setup-buttons > .unity-button {
+    margin: 0 4px 0 0;
+}
+
 .message-list {
     flex-grow: 1;
 }

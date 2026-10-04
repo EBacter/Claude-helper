@@ -14,6 +14,7 @@ namespace ClaudeHelper
     {
         const string ClaudePathPrefKey = "ClaudeHelper.ClaudePath";
         const string ModelPrefKey = "ClaudeHelper.Model";
+        const string SetupReadySessionKey = "ClaudeHelper.SetupReady";
         const string PackageUxmlPath = "Packages/com.local.claude-helper/Editor/ClaudeHelperWindow.uxml";
         const double PollIntervalSeconds = 0.25;
         const int MaxHistoryItems = 50;
@@ -30,9 +31,6 @@ namespace ClaudeHelper
             "Sonnet: faster, uses less of your plan",
             "Haiku: fastest, for simple questions",
         };
-
-        static readonly string DefaultClaudePath =
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin", "claude.exe");
 
         const string SystemPrompt =
             "You are a friendly Unity tutor answering questions inside the Unity Editor, in a window called \"Claude Helper\". " +
@@ -63,6 +61,19 @@ namespace ClaudeHelper
 
         const string WelcomeText =
             "Hi there, good to see you!";
+
+        const string NotInstalledText =
+            "Claude Helper answers with Claude Code, Anthropic's coding assistant, which isn't on this computer yet. " +
+            "You need a paid Claude plan, such as Pro or Max.\n\n" +
+            "1. Press Install Claude Code and wait until the PowerShell window says it has finished.\n" +
+            "2. Press Sign in and sign in with your Claude account in the browser that opens.\n\n" +
+            "This panel checks again whenever you come back to this window.";
+
+        const string SignedOutText =
+            "Claude Code is installed but not signed in. Press Sign in and sign in with your Claude account in the browser " +
+            "that opens. This panel checks again whenever you come back to this window.";
+
+        const string SetupDoneText = "Claude Code is installed and signed in. Ask away!";
 
         const string StoppedText = "Stopped. Claude didn't finish that answer.";
 
@@ -101,18 +112,34 @@ namespace ClaudeHelper
         ToolbarToggle settingsToggle;
         TextField claudePathField;
         DropdownField modelField;
+        VisualElement setupPanel;
+        Label setupText;
+        Button installButton;
+        Button signInButton;
 
         double nextPollTime;
+        SetupState setupState = SetupState.Checking;
+        bool setupCheckRunning;
+
+        bool SetupNeeded => setupState == SetupState.NotInstalled || setupState == SetupState.SignedOut;
 
         // Unity restores serialized fields as empty objects rather than null, so check the process ID.
         bool IsBusy => pendingRequest != null && pendingRequest.processId != 0;
 
         static string ProjectFolder => Path.GetDirectoryName(Application.dataPath);
 
+        /// <summary>The path typed in Settings. Empty means find Claude Code automatically.</summary>
         static string ClaudePath
         {
-            get => EditorPrefs.GetString(ClaudePathPrefKey, DefaultClaudePath);
+            get => EditorPrefs.GetString(ClaudePathPrefKey, "");
             set => EditorPrefs.SetString(ClaudePathPrefKey, value);
+        }
+
+        /// <summary>The Claude Code to run: the one set in Settings if it exists, otherwise the first one found, or null.</summary>
+        static string ResolveClaudePath()
+        {
+            var saved = ClaudePath.Trim().Trim('"');
+            return saved.Length > 0 && ClaudeSetup.LooksValid(saved) ? saved : ClaudeSetup.Find();
         }
 
         static string Model
@@ -131,6 +158,13 @@ namespace ClaudeHelper
         void OnEnable()
         {
             EditorApplication.quitting += LeaveCurrentConversation;
+        }
+
+        void OnFocus()
+        {
+            // Coming back from the installer or the sign-in window.
+            if (SetupNeeded)
+                RefreshSetup();
         }
 
         void OnDisable()
@@ -173,7 +207,14 @@ namespace ClaudeHelper
             historyButton = rootVisualElement.Q<ToolbarButton>("historyButton");
             terminalButton = rootVisualElement.Q<ToolbarButton>("terminalButton");
             modelField = rootVisualElement.Q<DropdownField>("modelField");
+            setupPanel = rootVisualElement.Q("setupPanel");
+            setupText = rootVisualElement.Q<Label>("setupText");
+            installButton = rootVisualElement.Q<Button>("installButton");
+            signInButton = rootVisualElement.Q<Button>("signInButton");
 
+            installButton.clicked += InstallClaude;
+            signInButton.clicked += SignIn;
+            rootVisualElement.Q<Button>("checkSetupButton").clicked += RefreshSetup;
             rootVisualElement.Q<ToolbarButton>("newConversationButton").clicked += StartNewConversation;
             historyButton.clicked += ShowHistoryMenu;
             terminalButton.clicked += OpenInTerminal;
@@ -183,7 +224,12 @@ namespace ClaudeHelper
 
             settingsToggle.RegisterValueChangedCallback(evt => settingsPanel.EnableInClassList("hidden", !evt.newValue));
             claudePathField.SetValueWithoutNotify(ClaudePath);
-            claudePathField.RegisterValueChangedCallback(evt => ClaudePath = evt.newValue.Trim());
+            claudePathField.RegisterValueChangedCallback(evt =>
+            {
+                ClaudePath = evt.newValue.Trim();
+                UpdatePathPlaceholder();
+            });
+            UpdatePathPlaceholder();
 
             modelField.choices = ModelLabels;
             modelField.index = Mathf.Max(0, Array.IndexOf(ModelIds, Model));
@@ -193,8 +239,12 @@ namespace ClaudeHelper
             questionField.verticalScrollerVisibility = ScrollerVisibility.Auto;
             questionField.RegisterCallback<KeyDownEvent>(OnQuestionKeyDown, TrickleDown.TrickleDown);
 
-            if (!ClaudePathLooksValid(ClaudePath))
-                ShowSettings();
+            // Check that Claude Code is installed and signed in once per Editor session, in the background.
+            if (SessionState.GetBool(SetupReadySessionKey, false) && ResolveClaudePath() != null)
+                setupState = SetupState.Ready;
+            else
+                RefreshSetup();
+            UpdateSetupPanel();
 
             // The first time the window opens, carry on with the latest conversation. After a script reload or an
             // Editor restart the window already has its own conversation back.
@@ -362,6 +412,13 @@ namespace ClaudeHelper
                 else if (!string.IsNullOrEmpty(result.SessionId))
                     sessionId = result.SessionId;
                 AddMessage(new ChatMessage { kind = MessageKind.Error, text = result.Text });
+
+                if (ClaudeCodeRunner.LooksLikeSignInProblem(result.Text))
+                {
+                    SessionState.SetBool(SetupReadySessionKey, false);
+                    setupState = SetupState.SignedOut;
+                    UpdateSetupPanel();
+                }
             }
 
             if (result.BlockedActions.Count > 0)
@@ -579,43 +636,104 @@ namespace ClaudeHelper
 
         void BrowseForClaude()
         {
-            var current = ClaudePath;
-            var folder = File.Exists(current) ? Path.GetDirectoryName(current) : "";
-            var chosen = EditorUtility.OpenFilePanel("Find claude.exe", folder, "exe");
+            var current = ResolveClaudePath();
+            var folder = current != null && File.Exists(current) ? Path.GetDirectoryName(current) : "";
+            var chosen = EditorUtility.OpenFilePanel("Find Claude Code (claude.exe)", folder, "exe,cmd");
             if (!string.IsNullOrEmpty(chosen))
                 claudePathField.value = chosen.Replace('/', '\\');
         }
 
-        void ShowSettings()
+        void UpdatePathPlaceholder()
         {
-            settingsToggle.value = true;
-            settingsPanel.RemoveFromClassList("hidden");
+            var found = ClaudeSetup.Find();
+            claudePathField.textEdition.placeholder = found == null ? "Not found. Follow the setup steps in this window." : "Found automatically: " + found;
         }
 
         bool TryGetClaudePath(out string claudePath)
         {
-            claudePath = ClaudePath.Trim().Trim('"');
-            if (ClaudePathLooksValid(claudePath))
+            claudePath = ResolveClaudePath();
+            if (claudePath != null)
                 return true;
 
+            var saved = ClaudePath.Trim().Trim('"');
             AddMessage(new ChatMessage
             {
                 kind = MessageKind.Error,
-                text = $"I couldn't find Claude Code at:\n{claudePath}\n\n" +
-                       "Set the correct path to claude.exe in Settings (top right of this window), then try again.",
+                text = saved.Length > 0
+                    ? $"I couldn't find Claude Code at:\n{saved}\n\nFix the path in Settings (top right of this window), or leave it empty to find it automatically."
+                    : "Claude Code isn't installed on this computer yet. Follow the steps at the top of this window, then ask again.",
             });
-            ShowSettings();
+            setupState = SetupState.NotInstalled;
+            UpdateSetupPanel();
             return false;
         }
 
-        static bool ClaudePathLooksValid(string path)
+        /// <summary>Checks in the background whether Claude Code is installed and signed in, and updates the setup panel.</summary>
+        async void RefreshSetup()
         {
-            if (string.IsNullOrWhiteSpace(path))
-                return false;
+            if (setupCheckRunning)
+                return;
 
-            // A bare command name such as "claude" is looked up on PATH when the process starts.
-            var hasFolder = path.IndexOfAny(new[] { '\\', '/' }) >= 0;
-            return !hasFolder || File.Exists(path);
+            var wasNeeded = SetupNeeded;
+            setupCheckRunning = true;
+            SetupState state;
+            try
+            {
+                // The await comes back on the main thread.
+                state = await ClaudeSetup.CheckAsync(ResolveClaudePath());
+            }
+            finally
+            {
+                setupCheckRunning = false;
+            }
+
+            // The window was closed while checking.
+            if (this == null || setupPanel == null)
+                return;
+
+            setupState = state;
+            SessionState.SetBool(SetupReadySessionKey, state == SetupState.Ready);
+            UpdateSetupPanel();
+            UpdatePathPlaceholder();
+            if (wasNeeded && state == SetupState.Ready)
+                AddMessage(new ChatMessage { kind = MessageKind.Info, text = SetupDoneText });
+        }
+
+        void UpdateSetupPanel()
+        {
+            if (setupPanel == null)
+                return;
+
+            setupPanel.EnableInClassList("hidden", !SetupNeeded);
+            setupText.text = setupState == SetupState.NotInstalled ? NotInstalledText : SignedOutText;
+            installButton.SetEnabled(setupState == SetupState.NotInstalled);
+            signInButton.SetEnabled(setupState == SetupState.SignedOut);
+        }
+
+        void InstallClaude()
+        {
+            if (!EditorUtility.DisplayDialog("Install Claude Code",
+                    "This opens a PowerShell window that downloads Claude Code from claude.ai and installs it for your Windows " +
+                    "account. It doesn't need administrator rights.\n\nIt runs Anthropic's official install command:\n" +
+                    ClaudeSetup.InstallCommand,
+                    "Install", "Cancel"))
+                return;
+
+            if (!ClaudeSetup.OpenInstaller(out var error))
+                AddMessage(new ChatMessage { kind = MessageKind.Error, text = error });
+        }
+
+        void SignIn()
+        {
+            var claudePath = ResolveClaudePath();
+            if (claudePath == null)
+            {
+                RefreshSetup();
+                return;
+            }
+
+            if (!ClaudeSetup.OpenSignIn(claudePath, out var error))
+                AddMessage(new ChatMessage { kind = MessageKind.Error, text = error });
         }
 
         void AddMessage(ChatMessage message)
