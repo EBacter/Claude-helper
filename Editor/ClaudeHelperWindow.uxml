@@ -1,0 +1,37 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements">
+    <ui:Style src="ClaudeHelperWindow.uss" />
+    <ui:VisualElement name="root" class="claude-helper">
+        <uie:Toolbar>
+            <uie:ToolbarButton name="newConversationButton" text="New conversation" />
+            <uie:ToolbarButton name="historyButton" text="History" tooltip="Open a saved conversation" />
+            <uie:ToolbarButton name="terminalButton" text="Open in terminal" tooltip="Continue this conversation with Claude Code in a terminal window, where Claude can ask you before risky actions instead of skipping them" />
+            <ui:VisualElement class="toolbar-flex" />
+            <ui:Label name="sessionLabel" class="session-label" text="New conversation" />
+            <uie:ToolbarToggle name="settingsToggle" text="Settings" />
+        </uie:Toolbar>
+        <ui:VisualElement name="settingsPanel" class="settings-panel hidden">
+            <ui:VisualElement class="settings-row">
+                <ui:TextField name="claudePathField" label="Path to claude.exe" class="claude-path-field" />
+                <ui:Button name="browseButton" text="Browse..." />
+            </ui:VisualElement>
+            <ui:DropdownField name="modelField" label="Model" class="model-field" tooltip="Which Claude model answers. Faster models reply sooner and use less of your plan, but may handle bigger changes less well." />
+            <ui:Label class="settings-hint" text="Claude Code runs from this project folder using your Claude subscription (no API key), with all its tools, your settings, skills and MCP servers, in auto mode." />
+        </ui:VisualElement>
+        <ui:TwoPaneSplitView name="splitView" class="split-view" orientation="Vertical" fixed-pane-index="1" fixed-pane-initial-dimension="110" view-data-key="claudeHelperSplitView">
+            <ui:VisualElement class="chat-pane">
+                <ui:ScrollView name="messageList" class="message-list" />
+                <ui:VisualElement name="thinkingRow" class="thinking-row hidden">
+                    <ui:Label name="thinkingLabel" class="thinking-label" text="Claude is working..." />
+                    <ui:Button name="stopButton" text="Stop" />
+                </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement class="input-pane">
+                <ui:VisualElement class="input-row">
+                    <ui:TextField name="questionField" multiline="true" class="question-field" />
+                    <ui:Button name="sendButton" text="Ask" class="send-button" />
+                </ui:VisualElement>
+                <ui:Label class="input-hint" text="Enter to send, Shift+Enter for a new line. Drag the line above to resize. Right-click a message to copy it." />
+            </ui:VisualElement>
+        </ui:TwoPaneSplitView>
+    </ui:VisualElement>
+</ui:UXML>

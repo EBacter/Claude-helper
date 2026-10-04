@@ -1,0 +1,7 @@
+{
+  "name": "com.local.claude-helper",
+  "version": "1.0.0",
+  "displayName": "Claude Helper",
+  "description": "An Editor window (Window > Claude Helper) that runs Claude Code in your project to explain Unity and make changes. Editor-only, never included in builds.",
+  "unity": "6000.0"
+}
