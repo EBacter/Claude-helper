@@ -14,10 +14,11 @@ namespace ClaudeHelper
     {
         const string ClaudePathPrefKey = "ClaudeHelper.ClaudePath";
         const string ModelPrefKey = "ClaudeHelper.Model";
+        const string EffortPrefKey = "ClaudeHelper.Effort";
         const string SetupReadySessionKey = "ClaudeHelper.SetupReady";
         const string PackageUxmlPath = "Packages/com.local.claude-helper/Editor/ClaudeHelperWindow.uxml";
         const double PollIntervalSeconds = 0.25;
-        const int MaxHistoryItems = 50;
+        const int MaxHistoryItems = 200;
 
         // A new conversation already starts at about 27k tokens (Claude Code's own instructions and tools).
         const int LongConversationTokens = 100_000;
@@ -30,6 +31,25 @@ namespace ClaudeHelper
             "Opus: most capable",
             "Sonnet: faster, uses less of your plan",
             "Haiku: fastest, for simple questions",
+        };
+
+        // Claude Code's effort levels. An empty ID leaves the choice to the person's Claude Code settings.
+        static readonly string[] EffortIds = { "", "low", "medium", "high", "xhigh", "max" };
+        static readonly List<string> EffortLabels = new List<string>
+        {
+            "Your Claude Code default",
+            "Low: quickest answers",
+            "Medium: a good balance",
+            "High: thinks harder",
+            "Extra high: for tricky problems",
+            "Max: slowest, uses the most of your plan",
+        };
+
+        static readonly string[] ExampleQuestions =
+        {
+            "What does the selected object do, and what are its components for?",
+            "Explain the errors in my Console and how to fix them.",
+            "How do I make a cube move with the arrow keys?",
         };
 
         const string SystemPrompt =
@@ -59,8 +79,11 @@ namespace ClaudeHelper
             "  - A menu path: [[menu:Window > General > Console]].\n" +
             "  - Code, script names and component fields in code: `backticks`. Longer code goes in ``` fenced blocks.";
 
+        const string WelcomeTitle = "Ask Claude about Unity";
+
         const string WelcomeText =
-            "Hi there, good to see you!";
+            "Ask anything, from \"what is a prefab?\" to \"add a jump to my player\". Claude sees what is open and selected in the " +
+            "Editor and what the Console says. Try one of these:";
 
         const string NotInstalledText =
             "Claude Helper answers with Claude Code, Anthropic's coding assistant, which isn't on this computer yet. " +
@@ -87,7 +110,7 @@ namespace ClaudeHelper
             "so Claude won't remember the messages above. You can still read them here. Your next question starts a new conversation.";
 
         const string StatsTooltip =
-            "How long the answer took, how many steps Claude took, and how much of this conversation Claude reads each time you ask. " +
+            "Which model answered and at what effort, how long the answer took, how many steps Claude took, and how much of this conversation Claude reads each time you ask. " +
             "Bigger conversations are slower and use more of your plan.";
 
         [SerializeField] List<ChatMessage> messages = new List<ChatMessage>();
@@ -103,15 +126,23 @@ namespace ClaudeHelper
         ScrollView messageList;
         TextField questionField;
         Button sendButton;
-        ToolbarButton historyButton;
+        ToolbarToggle historyToggle;
         ToolbarButton terminalButton;
-        Label sessionLabel;
+        ToolbarMenu modelMenu;
+        VisualElement historyPanel;
+        ScrollView historyList;
+        ToolbarSearchField historySearch;
+        VisualElement splitView;
+        VisualElement conversationHeader;
+        Label conversationTitle;
         Label thinkingLabel;
         VisualElement thinkingRow;
         VisualElement settingsPanel;
         ToolbarToggle settingsToggle;
         TextField claudePathField;
         DropdownField modelField;
+        DropdownField effortField;
+        ClaudeDefaults claudeDefaults = new ClaudeDefaults();
         VisualElement setupPanel;
         Label setupText;
         Button installButton;
@@ -148,6 +179,17 @@ namespace ClaudeHelper
             set => EditorPrefs.SetString(ModelPrefKey, value);
         }
 
+        static string Effort
+        {
+            get => EditorPrefs.GetString(EffortPrefKey, "");
+            set => EditorPrefs.SetString(EffortPrefKey, value);
+        }
+
+        /// <summary>The model that will answer: the one chosen here, otherwise Claude Code's own setting, or null if neither is known.</summary>
+        string EffectiveModel => Model.Length > 0 ? Model : claudeDefaults.model;
+
+        string EffectiveEffort => Effort.Length > 0 ? Effort : claudeDefaults.EffortFor(EffectiveModel);
+
         [MenuItem("Window/Claude Helper")]
         public static void Open()
         {
@@ -165,6 +207,10 @@ namespace ClaudeHelper
             // Coming back from the installer or the sign-in window.
             if (SetupNeeded)
                 RefreshSetup();
+
+            // Coming back from editing Claude Code's settings.
+            if (modelMenu != null)
+                RefreshClaudeDefaults();
         }
 
         void OnDisable()
@@ -198,15 +244,22 @@ namespace ClaudeHelper
             messageList = rootVisualElement.Q<ScrollView>("messageList");
             questionField = rootVisualElement.Q<TextField>("questionField");
             sendButton = rootVisualElement.Q<Button>("sendButton");
-            sessionLabel = rootVisualElement.Q<Label>("sessionLabel");
             thinkingLabel = rootVisualElement.Q<Label>("thinkingLabel");
             thinkingRow = rootVisualElement.Q("thinkingRow");
             settingsPanel = rootVisualElement.Q("settingsPanel");
             settingsToggle = rootVisualElement.Q<ToolbarToggle>("settingsToggle");
             claudePathField = rootVisualElement.Q<TextField>("claudePathField");
-            historyButton = rootVisualElement.Q<ToolbarButton>("historyButton");
+            historyToggle = rootVisualElement.Q<ToolbarToggle>("historyToggle");
+            historyPanel = rootVisualElement.Q("historyPanel");
+            historyList = rootVisualElement.Q<ScrollView>("historyList");
+            historySearch = rootVisualElement.Q<ToolbarSearchField>("historySearch");
+            splitView = rootVisualElement.Q("splitView");
+            conversationHeader = rootVisualElement.Q("conversationHeader");
+            conversationTitle = rootVisualElement.Q<Label>("conversationTitle");
             terminalButton = rootVisualElement.Q<ToolbarButton>("terminalButton");
+            modelMenu = rootVisualElement.Q<ToolbarMenu>("modelMenu");
             modelField = rootVisualElement.Q<DropdownField>("modelField");
+            effortField = rootVisualElement.Q<DropdownField>("effortField");
             setupPanel = rootVisualElement.Q("setupPanel");
             setupText = rootVisualElement.Q<Label>("setupText");
             installButton = rootVisualElement.Q<Button>("installButton");
@@ -216,7 +269,14 @@ namespace ClaudeHelper
             signInButton.clicked += SignIn;
             rootVisualElement.Q<Button>("checkSetupButton").clicked += RefreshSetup;
             rootVisualElement.Q<ToolbarButton>("newConversationButton").clicked += StartNewConversation;
-            historyButton.clicked += ShowHistoryMenu;
+            historyToggle.RegisterValueChangedCallback(evt => ShowHistory(evt.newValue));
+            historySearch.RegisterValueChangedCallback(_ => RebuildHistoryList());
+            rootVisualElement.Q<Button>("historyFolderButton").clicked += () =>
+            {
+                var folder = ConversationStore.Folder(ProjectFolder);
+                Directory.CreateDirectory(folder);
+                EditorUtility.RevealInFinder(folder);
+            };
             terminalButton.clicked += OpenInTerminal;
             rootVisualElement.Q<Button>("stopButton").clicked += StopRequest;
             rootVisualElement.Q<Button>("browseButton").clicked += BrowseForClaude;
@@ -233,7 +293,11 @@ namespace ClaudeHelper
 
             modelField.choices = ModelLabels;
             modelField.index = Mathf.Max(0, Array.IndexOf(ModelIds, Model));
-            modelField.RegisterValueChangedCallback(_ => Model = ModelIds[Mathf.Max(0, modelField.index)]);
+            modelField.RegisterValueChangedCallback(_ => SetModel(ModelIds[Mathf.Max(0, modelField.index)]));
+            effortField.choices = EffortLabels;
+            effortField.index = Mathf.Max(0, Array.IndexOf(EffortIds, Effort));
+            effortField.RegisterValueChangedCallback(_ => SetEffort(EffortIds[Mathf.Max(0, effortField.index)]));
+            RefreshClaudeDefaults();
 
             questionField.textEdition.placeholder = "Ask a question about Unity...";
             questionField.verticalScrollerVisibility = ScrollerVisibility.Auto;
@@ -341,7 +405,9 @@ namespace ClaudeHelper
             string error;
             try
             {
-                request = ClaudeCodeRunner.Start(claudePath, ProjectFolder, prompt, sessionId, Model, SystemPrompt, out error);
+                request = ClaudeCodeRunner.Start(claudePath, ProjectFolder, prompt, sessionId, Model, Effort, SystemPrompt, out error);
+                if (request != null)
+                    request.effort = EffectiveEffort;
             }
             catch (Exception e)
             {
@@ -397,7 +463,7 @@ namespace ClaudeHelper
                     kind = MessageKind.Assistant,
                     text = CleanMarkdown(result.Text),
                     steps = result.Steps,
-                    stats = FormatStats(elapsed, result.Steps.Count, result.ContextTokens),
+                    stats = FormatStats(elapsed, result.Steps.Count, result.ContextTokens, result.Model ?? EffectiveModel, request.effort),
                 });
             }
             else
@@ -490,6 +556,7 @@ namespace ClaudeHelper
             sentContext = new List<string>();
             longConversationNoted = false;
             messages = new List<ChatMessage>();
+            historyToggle.value = false;
             RebuildMessages();
             UpdateUi();
             questionField.Focus();
@@ -500,52 +567,100 @@ namespace ClaudeHelper
             if (IsBusy || string.IsNullOrEmpty(sessionId) || !TryGetClaudePath(out var claudePath))
                 return;
 
-            if (ClaudeCodeRunner.OpenInTerminal(claudePath, ProjectFolder, sessionId, Model, out var error))
+            if (ClaudeCodeRunner.OpenInTerminal(claudePath, ProjectFolder, sessionId, Model, Effort, out var error))
                 AddMessage(new ChatMessage { kind = MessageKind.Info, text = TerminalText });
             else
                 AddMessage(new ChatMessage { kind = MessageKind.Error, text = error });
         }
 
-        void ShowHistoryMenu()
+        void ShowHistory(bool show)
         {
-            var menu = new GenericMenu();
-            var saved = ConversationStore.List(ProjectFolder, MaxHistoryItems);
-            if (saved.Count == 0)
-                menu.AddDisabledItem(new GUIContent("No saved conversations yet"));
+            if (historyToggle.value != show)
+                historyToggle.SetValueWithoutNotify(show);
 
-            foreach (var conversation in saved)
+            historyPanel.EnableInClassList("hidden", !show);
+            splitView.EnableInClassList("hidden", show);
+            if (show)
             {
-                var id = conversation.id;
-                menu.AddItem(new GUIContent(HistoryMenuLabel(conversation)), id == conversationId, () => OpenConversation(id));
+                historySearch.SetValueWithoutNotify("");
+                RebuildHistoryList();
+                historySearch.schedule.Execute(() => historySearch.Q<TextField>()?.Focus());
             }
-
-            menu.AddSeparator("");
-            if (saved.Any(c => c.id == conversationId))
-                menu.AddItem(new GUIContent("Delete this conversation..."), false, DeleteCurrentConversation);
-            else
-                menu.AddDisabledItem(new GUIContent("Delete this conversation..."));
-            menu.AddItem(new GUIContent("Show history folder"), false, () =>
-            {
-                var folder = ConversationStore.Folder(ProjectFolder);
-                Directory.CreateDirectory(folder);
-                EditorUtility.RevealInFinder(folder);
-            });
-
-            menu.DropDown(historyButton.worldBound);
+            UpdateUi();
         }
 
-        static string HistoryMenuLabel(SavedConversation conversation)
+        void RebuildHistoryList()
         {
-            // A "/" in a menu label makes a submenu. Ending on ")" stops Unity reading the end as a keyboard shortcut.
-            var title = (conversation.title ?? "").Replace('/', '-');
-            var updated = new DateTime(conversation.updatedUtcTicks, DateTimeKind.Utc).ToLocalTime();
-            return $"{title}  ({updated:d MMM, HH:mm})";
+            historyList.Clear();
+            var filter = (historySearch.value ?? "").Trim();
+            var saved = ConversationStore.List(ProjectFolder, MaxHistoryItems)
+                .Where(c => filter.Length == 0 || Matches(c, filter))
+                .ToList();
+
+            if (saved.Count == 0)
+            {
+                var empty = new Label(filter.Length == 0
+                    ? "No saved conversations yet. They appear here after your first question."
+                    : $"No conversations mention \"{filter}\".");
+                empty.AddToClassList("history-empty");
+                historyList.Add(empty);
+                return;
+            }
+
+            foreach (var conversation in saved)
+                historyList.Add(CreateHistoryRow(conversation));
+        }
+
+        static bool Matches(SavedConversation conversation, string filter) =>
+            (conversation.title ?? "").IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            conversation.messages.Any(m => m.kind == MessageKind.User &&
+                                           (m.text ?? "").IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+
+        VisualElement CreateHistoryRow(SavedConversation conversation)
+        {
+            var id = conversation.id;
+            var row = new VisualElement { tooltip = "Open this conversation" };
+            row.AddToClassList("history-row");
+            row.EnableInClassList("history-row--current", id == conversationId);
+
+            var text = new VisualElement();
+            text.AddToClassList("history-row__text");
+            var title = new Label(conversation.title);
+            title.AddToClassList("history-row__title");
+            var questions = conversation.messages.Count(m => m.kind == MessageKind.User);
+            var meta = new Label($"{FormatWhen(conversation.updatedUtcTicks)} · {(questions == 1 ? "1 question" : questions + " questions")}");
+            meta.AddToClassList("history-row__meta");
+            text.Add(title);
+            text.Add(meta);
+            row.Add(text);
+
+            var delete = new Button(() => DeleteConversation(id, conversation.title)) { text = "×", tooltip = "Delete this conversation" };
+            delete.AddToClassList("history-row__delete");
+            row.Add(delete);
+
+            // Clicks on the delete button don't reach the row: buttons stop the click themselves.
+            row.RegisterCallback<ClickEvent>(_ => OpenConversation(id));
+            return row;
+        }
+
+        static string FormatWhen(long utcTicks)
+        {
+            var when = new DateTime(utcTicks, DateTimeKind.Utc).ToLocalTime();
+            var today = DateTime.Now.Date;
+            if (when.Date == today)
+                return $"Today, {when:HH:mm}";
+            if (when.Date == today.AddDays(-1))
+                return $"Yesterday, {when:HH:mm}";
+            return when.Year == today.Year ? $"{when:d MMM, HH:mm}" : $"{when:d MMM yyyy}";
         }
 
         void OpenConversation(string id)
         {
             if (id == conversationId)
+            {
+                ShowHistory(false);
                 return;
+            }
 
             var saved = ConversationStore.Load(ProjectFolder, id);
             if (saved == null)
@@ -556,6 +671,7 @@ namespace ClaudeHelper
 
             LeaveCurrentConversation();
             LoadConversation(saved);
+            ShowHistory(false);
             RebuildMessages();
             UpdateUi();
             questionField.Focus();
@@ -580,18 +696,18 @@ namespace ClaudeHelper
             }
         }
 
-        void DeleteCurrentConversation()
+        void DeleteConversation(string id, string title)
         {
-            if (string.IsNullOrEmpty(conversationId))
-                return;
-
-            var title = ConversationStore.MakeTitle(messages);
             if (!EditorUtility.DisplayDialog("Delete conversation",
                     $"Delete \"{title}\" from Claude Helper's history?\n\nThis can't be undone.", "Delete", "Cancel"))
                 return;
 
-            var id = conversationId;
-            StartNewConversation();
+            if (id == conversationId)
+            {
+                StartNewConversation();
+                ShowHistory(true);
+            }
+
             try
             {
                 ConversationStore.Delete(ProjectFolder, id);
@@ -600,6 +716,8 @@ namespace ClaudeHelper
             {
                 Debug.LogWarning($"Claude Helper couldn't delete the conversation file: {e.Message}");
             }
+
+            RebuildHistoryList();
         }
 
         void SaveConversation()
@@ -739,7 +857,10 @@ namespace ClaudeHelper
         void AddMessage(ChatMessage message)
         {
             if (messages.Count == 0)
+            {
                 messageList.Clear();
+                messageList.RemoveFromClassList("message-list--empty");
+            }
             messages.Add(message);
             messageList.Add(CreateMessageElement(message));
             ScrollToBottom();
@@ -749,12 +870,43 @@ namespace ClaudeHelper
         void RebuildMessages()
         {
             messageList.Clear();
+            messageList.EnableInClassList("message-list--empty", messages.Count == 0);
             if (messages.Count == 0)
-                messageList.Add(CreateMessageElement(new ChatMessage { kind = MessageKind.Info, text = WelcomeText }));
+                messageList.Add(CreateEmptyState());
 
             foreach (var message in messages)
                 messageList.Add(CreateMessageElement(message));
             ScrollToBottom();
+        }
+
+        VisualElement CreateEmptyState()
+        {
+            var empty = new VisualElement();
+            empty.AddToClassList("empty-state");
+
+            var title = new Label(WelcomeTitle);
+            title.AddToClassList("empty-state__title");
+            empty.Add(title);
+
+            var text = new Label(WelcomeText);
+            text.AddToClassList("empty-state__text");
+            empty.Add(text);
+
+            var examples = new VisualElement();
+            examples.AddToClassList("example-list");
+            foreach (var example in ExampleQuestions)
+            {
+                var chip = new Button(() =>
+                {
+                    questionField.value = example;
+                    questionField.Focus();
+                    questionField.SelectRange(example.Length, example.Length);
+                }) { text = example, tooltip = "Put this question in the box below, ready to send or change" };
+                chip.AddToClassList("example-chip");
+                examples.Add(chip);
+            }
+            empty.Add(examples);
+            return empty;
         }
 
         VisualElement CreateMessageElement(ChatMessage message)
@@ -860,8 +1012,102 @@ namespace ClaudeHelper
             if (busy)
                 UpdateThinkingLabel();
 
-            sessionLabel.text = string.IsNullOrEmpty(sessionId) ? "New conversation" : "Continuing conversation";
-            sessionLabel.tooltip = string.IsNullOrEmpty(sessionId) ? "" : "Claude Code session: " + sessionId;
+            var hasConversation = messages.Any(m => m.kind == MessageKind.User);
+            conversationHeader.EnableInClassList("hidden", !hasConversation || historyToggle.value);
+            conversationTitle.text = hasConversation ? ConversationStore.MakeTitle(messages) : "";
+            conversationTitle.tooltip = string.IsNullOrEmpty(sessionId)
+                ? "Claude doesn't remember this conversation, so your next question starts fresh."
+                : "Claude remembers this conversation. Claude Code session: " + sessionId;
+        }
+
+        void RefreshClaudeDefaults()
+        {
+            claudeDefaults = ClaudeSetup.ReadDefaults(ProjectFolder);
+            modelField.choices = new List<string>(ModelLabels) { [0] = DefaultLabel(claudeDefaults.model == null ? null : ModelName(claudeDefaults.model)) };
+            modelField.SetValueWithoutNotify(modelField.choices[Mathf.Max(0, Array.IndexOf(ModelIds, Model))]);
+            UpdateModelMenu();
+        }
+
+        static string DefaultLabel(string value) =>
+            value == null ? "Your Claude Code default" : $"Your Claude Code default ({value})";
+
+        void SetModel(string id)
+        {
+            Model = id;
+            modelField.SetValueWithoutNotify(modelField.choices[Mathf.Max(0, Array.IndexOf(ModelIds, id))]);
+            UpdateModelMenu();
+        }
+
+        void SetEffort(string id)
+        {
+            Effort = id;
+            effortField.SetValueWithoutNotify(effortField.choices[Mathf.Max(0, Array.IndexOf(EffortIds, id))]);
+            UpdateModelMenu();
+        }
+
+        void BuildModelMenu()
+        {
+            var menu = modelMenu.menu;
+            menu.ClearItems();
+            for (var i = 0; i < ModelIds.Length; i++)
+            {
+                var id = ModelIds[i];
+                menu.AppendAction("Model/" + modelField.choices[i], _ => SetModel(id),
+                    _ => Model == id ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            }
+
+            for (var i = 0; i < EffortIds.Length; i++)
+            {
+                var id = EffortIds[i];
+                menu.AppendAction("Effort/" + effortField.choices[i], _ => SetEffort(id),
+                    _ => Effort == id ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+            }
+        }
+
+        /// <summary>Shows the model and effort that will answer in the toolbar, in Settings and in the menu.</summary>
+        void UpdateModelMenu()
+        {
+            var model = EffectiveModel;
+            var effort = EffortName(EffectiveEffort);
+
+            // Claude Code keeps an effort per model, so the default effort changes with the model.
+            effortField.choices = new List<string>(EffortLabels) { [0] = DefaultLabel(EffortName(claudeDefaults.EffortFor(model))) };
+            effortField.SetValueWithoutNotify(effortField.choices[Mathf.Max(0, Array.IndexOf(EffortIds, Effort))]);
+            BuildModelMenu();
+
+            modelMenu.text = (model == null ? "Default model" : ModelName(model)) + " · " + (effort == null ? "auto effort" : effort + " effort");
+            var effortSource = Effort.Length > 0 ? EffortName(Effort)
+                : effort != null ? DefaultLabel(effort)
+                : "not set anywhere, so Claude Code picks its built-in level";
+            modelMenu.tooltip =
+                $"Model: {(Model.Length > 0 ? ModelName(Model) : DefaultLabel(model == null ? null : ModelName(model)))}\n" +
+                $"Effort: {effortSource}\n\n" +
+                "Bigger models and higher effort handle hard questions better, but are slower and use more of your plan. Click to change.";
+        }
+
+        /// <summary>A short name for a model alias or ID, for example "Opus" for "opus" or "Opus 5.5" for "claude-opus-5-5".</summary>
+        static string ModelName(string model)
+        {
+            var match = Regex.Match(model, @"(opus|sonnet|haiku|fable)(?:-(\d+)(?:-(\d{1,2})(?!\d))?)?", RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return model;
+
+            var family = match.Groups[1].Value.ToLowerInvariant();
+            var name = char.ToUpperInvariant(family[0]) + family.Substring(1);
+            if (match.Groups[2].Success)
+                name += " " + match.Groups[2].Value + (match.Groups[3].Success ? "." + match.Groups[3].Value : "");
+            return name;
+        }
+
+        static string EffortName(string effort)
+        {
+            switch (effort)
+            {
+                case null:
+                case "": return null;
+                case "xhigh": return "Extra high";
+                default: return char.ToUpperInvariant(effort[0]) + effort.Substring(1);
+            }
         }
 
         void UpdateThinkingLabel()
@@ -879,9 +1125,14 @@ namespace ClaudeHelper
                 thinkingLabel.text = text;
         }
 
-        static string FormatStats(double seconds, int steps, int contextTokens)
+        static string FormatStats(double seconds, int steps, int contextTokens, string model, string effort)
         {
-            var parts = new List<string> { $"{Math.Max(1, (int)Math.Round(seconds))}s" };
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(model))
+                parts.Add(ModelName(model));
+            if (!string.IsNullOrEmpty(effort))
+                parts.Add(EffortName(effort).ToLowerInvariant() + " effort");
+            parts.Add($"{Math.Max(1, (int)Math.Round(seconds))}s");
             if (steps > 0)
                 parts.Add(steps == 1 ? "1 step" : $"{steps} steps");
             if (contextTokens > 0)

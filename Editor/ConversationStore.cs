@@ -117,13 +117,9 @@ namespace ClaudeHelper
             if (string.IsNullOrEmpty(sessionId))
                 return false;
 
-            var configFolder = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-            if (string.IsNullOrEmpty(configFolder))
-                configFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
-
             // Claude Code names the folder after the project path, with every other character replaced by "-".
             var projectName = Regex.Replace(Path.GetFullPath(projectFolder), "[^A-Za-z0-9]", "-");
-            var transcriptFolder = Path.Combine(configFolder, "projects", projectName);
+            var transcriptFolder = Path.Combine(ClaudeSetup.ConfigFolder, "projects", projectName);
             return !Directory.Exists(transcriptFolder) || File.Exists(Path.Combine(transcriptFolder, sessionId + ".jsonl"));
         }
 

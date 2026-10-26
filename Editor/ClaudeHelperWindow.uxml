@@ -1,12 +1,12 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements">
     <ui:Style src="ClaudeHelperWindow.uss" />
     <ui:VisualElement name="root" class="claude-helper">
-        <uie:Toolbar>
-            <uie:ToolbarButton name="newConversationButton" text="New conversation" />
-            <uie:ToolbarButton name="historyButton" text="History" tooltip="Open a saved conversation" />
+        <uie:Toolbar class="main-toolbar">
+            <uie:ToolbarButton name="newConversationButton" text="+ New" tooltip="Start a new conversation. The current one stays in History." />
+            <uie:ToolbarToggle name="historyToggle" text="History" tooltip="Show your saved conversations" />
             <uie:ToolbarButton name="terminalButton" text="Open in terminal" tooltip="Continue this conversation with Claude Code in a terminal window, where Claude can ask you before risky actions instead of skipping them" />
             <ui:VisualElement class="toolbar-flex" />
-            <ui:Label name="sessionLabel" class="session-label" text="New conversation" />
+            <uie:ToolbarMenu name="modelMenu" class="model-menu" tooltip="Which model answers and how hard it thinks. Click to change." />
             <uie:ToolbarToggle name="settingsToggle" text="Settings" />
         </uie:Toolbar>
         <ui:VisualElement name="settingsPanel" class="settings-panel hidden">
@@ -15,6 +15,7 @@
                 <ui:Button name="browseButton" text="Browse..." />
             </ui:VisualElement>
             <ui:DropdownField name="modelField" label="Model" class="model-field" tooltip="Which Claude model answers. Faster models reply sooner and use less of your plan, but may handle bigger changes less well." />
+            <ui:DropdownField name="effortField" label="Effort" class="model-field" tooltip="How long Claude thinks before answering. Higher effort is slower and uses more of your plan, but handles harder problems better." />
             <ui:Label class="settings-hint" text="Claude Code runs from this project folder using your Claude subscription (no API key), with all its tools, your settings, skills and MCP servers, in auto mode." />
         </ui:VisualElement>
         <ui:VisualElement name="setupPanel" class="setup-panel hidden">
@@ -26,12 +27,26 @@
                 <ui:Button name="checkSetupButton" text="Check again" />
             </ui:VisualElement>
         </ui:VisualElement>
-        <ui:TwoPaneSplitView name="splitView" class="split-view" orientation="Vertical" fixed-pane-index="1" fixed-pane-initial-dimension="110" view-data-key="claudeHelperSplitView">
+        <ui:VisualElement name="historyPanel" class="history-panel hidden">
+            <ui:VisualElement class="history-header">
+                <ui:Label class="history-heading" text="Conversations" />
+                <uie:ToolbarSearchField name="historySearch" class="history-search" />
+            </ui:VisualElement>
+            <ui:ScrollView name="historyList" class="history-list" />
+            <ui:VisualElement class="history-footer">
+                <ui:Button name="historyFolderButton" text="Show history folder" class="history-footer-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="conversationHeader" class="conversation-header hidden">
+            <ui:Label name="conversationTitle" class="conversation-title" />
+        </ui:VisualElement>
+        <ui:TwoPaneSplitView name="splitView" class="split-view" orientation="Vertical" fixed-pane-index="1" fixed-pane-initial-dimension="72" view-data-key="claudeHelperSplitView2">
             <ui:VisualElement class="chat-pane">
                 <ui:ScrollView name="messageList" class="message-list" />
                 <ui:VisualElement name="thinkingRow" class="thinking-row hidden">
+                    <ui:VisualElement class="thinking-dot" />
                     <ui:Label name="thinkingLabel" class="thinking-label" text="Claude is working..." />
-                    <ui:Button name="stopButton" text="Stop" />
+                    <ui:Button name="stopButton" text="Stop" class="stop-button" />
                 </ui:VisualElement>
             </ui:VisualElement>
             <ui:VisualElement class="input-pane">
@@ -39,7 +54,7 @@
                     <ui:TextField name="questionField" multiline="true" class="question-field" />
                     <ui:Button name="sendButton" text="Ask" class="send-button" />
                 </ui:VisualElement>
-                <ui:Label class="input-hint" text="Enter to send, Shift+Enter for a new line. Drag the line above to resize. Right-click a message to copy it." />
+                <ui:Label class="input-hint" text="Enter to send · Shift+Enter for a new line · Right-click a message to copy it" />
             </ui:VisualElement>
         </ui:TwoPaneSplitView>
     </ui:VisualElement>

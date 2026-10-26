@@ -21,6 +21,9 @@ namespace ClaudeHelper
         /// <summary>How many tokens of conversation Claude read for its last step, or 0 if unknown.</summary>
         public int ContextTokens;
 
+        /// <summary>The model that answered, as Claude Code reports it (for example "claude-opus-5-5"), or null.</summary>
+        public string Model;
+
         public static ClaudeResult Ok(string text, string sessionId) =>
             new ClaudeResult { Success = true, Text = text, SessionId = sessionId };
 
@@ -44,6 +47,10 @@ namespace ClaudeHelper
         public long readOffset;
         public List<string> steps = new List<string>();
         public int contextTokens;
+        public string model;
+
+        // The effort the window asked for, shown with the answer. Empty means Claude Code's default.
+        public string effort;
 
         public double ElapsedSeconds => (DateTime.UtcNow - new DateTime(startedUtcTicks, DateTimeKind.Utc)).TotalSeconds;
     }
@@ -60,7 +67,7 @@ namespace ClaudeHelper
         const string ErrorFile = "errors.txt";
 
         public static ClaudeRequest Start(string claudePath, string projectFolder, string prompt, string sessionId, string model,
-            string systemPrompt, out string error)
+            string effort, string systemPrompt, out string error)
         {
             error = null;
             var folder = Path.Combine(projectFolder, "Temp", "ClaudeHelper", Guid.NewGuid().ToString("N"));
@@ -78,7 +85,7 @@ namespace ClaudeHelper
             // stream-json writes one line per step as it happens (it needs --verbose), so the window can show progress.
             claudeCommand.Append(" -p --output-format stream-json --verbose");
             claudeCommand.Append(" --permission-mode auto");
-            AppendModel(claudeCommand, model);
+            AppendModel(claudeCommand, model, effort);
             claudeCommand.Append(" --permission-prompts none");
             claudeCommand.Append(" --append-system-prompt-file ").Append(Quote(Path.Combine(folder, SystemPromptFile)));
             if (!string.IsNullOrEmpty(sessionId))
@@ -131,13 +138,14 @@ namespace ClaudeHelper
         /// Opens a terminal window running interactive Claude Code on an existing session, where it can ask
         /// for permission instead of refusing.
         /// </summary>
-        public static bool OpenInTerminal(string claudePath, string projectFolder, string sessionId, string model, out string error)
+        public static bool OpenInTerminal(string claudePath, string projectFolder, string sessionId, string model, string effort,
+            out string error)
         {
             error = null;
 
             // "|| pause" keeps the window open only when Claude Code fails, so its error can still be read.
             var claudeCommand = new StringBuilder(Quote(claudePath));
-            AppendModel(claudeCommand, model);
+            AppendModel(claudeCommand, model, effort);
             claudeCommand.Append(" --resume ").Append(Quote(sessionId)).Append(" || pause");
 
             // Not a shell execute, so the environment can be changed. The Editor has no console of its own,
@@ -201,6 +209,7 @@ namespace ClaudeHelper
             var result = ParseOutput(stdout, stderr);
             result.Steps = request.steps ?? new List<string>();
             result.ContextTokens = request.contextTokens;
+            result.Model = request.model;
             return result;
         }
 
@@ -252,7 +261,8 @@ namespace ClaudeHelper
             request.steps ??= new List<string>();
             foreach (var line in Encoding.UTF8.GetString(bytes).Split('\n'))
             {
-                if (!line.StartsWith("{\"type\":\"assistant\""))
+                var isInit = line.StartsWith("{\"type\":\"system\"") && line.Contains("\"subtype\":\"init\"");
+                if (!isInit && !line.StartsWith("{\"type\":\"assistant\""))
                     continue;
 
                 StreamLine parsed;
@@ -262,6 +272,13 @@ namespace ClaudeHelper
                 }
                 catch (Exception)
                 {
+                    continue;
+                }
+
+                if (isInit)
+                {
+                    if (!string.IsNullOrEmpty(parsed?.model))
+                        request.model = parsed.model;
                     continue;
                 }
 
@@ -347,6 +364,8 @@ namespace ClaudeHelper
         [Serializable]
         class StreamLine
         {
+            // Only on the first line ("system"/"init"): the model that answers.
+            public string model;
             public StreamMessage message;
         }
 
@@ -425,12 +444,17 @@ namespace ClaudeHelper
             return text.Length <= maxLength ? text : text.Substring(0, maxLength) + "...";
         }
 
-        static void AppendModel(StringBuilder command, string model)
+        static void AppendModel(StringBuilder command, string model, string effort)
         {
-            // The value comes from a fixed list, but it ends up on a cmd.exe command line, so allow only plain names.
-            if (!string.IsNullOrEmpty(model) && model.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '.' || c == '_'))
+            // The values come from fixed lists, but they end up on a cmd.exe command line, so allow only plain names.
+            if (IsPlainName(model))
                 command.Append(" --model ").Append(model);
+            if (IsPlainName(effort))
+                command.Append(" --effort ").Append(effort);
         }
+
+        static bool IsPlainName(string value) =>
+            !string.IsNullOrEmpty(value) && value.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '.' || c == '_');
 
         static ClaudeResult ParseOutput(string stdout, string stderr)
         {

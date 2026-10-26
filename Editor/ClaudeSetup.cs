@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace ClaudeHelper
 {
@@ -16,6 +17,37 @@ namespace ClaudeHelper
         NotInstalled,
         SignedOut,
         Ready,
+    }
+
+    /// <summary>The model and effort Claude Code uses when the window doesn't choose one. Null means not set.</summary>
+    [Serializable]
+    class ClaudeDefaults
+    {
+        public string model;
+        public string effortLevel;
+
+        // Claude Code also keeps an effort per model, under "modelSettings", keyed by model ID (for example "claude-opus-5-5").
+        [NonSerialized] public Dictionary<string, string> modelEfforts = new Dictionary<string, string>();
+
+        /// <summary>The effort Claude Code uses for a model alias or ID when none is chosen here, or null if it isn't set.</summary>
+        public string EffortFor(string modelAliasOrId)
+        {
+            if (!string.IsNullOrEmpty(modelAliasOrId))
+            {
+                if (modelEfforts.TryGetValue(modelAliasOrId, out var exact))
+                    return exact;
+
+                // An alias such as "opus" means the newest model of that family, so take the highest ID that contains it.
+                var newest = modelEfforts.Keys
+                    .Where(id => id.IndexOf(modelAliasOrId, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .OrderByDescending(id => id, StringComparer.Ordinal)
+                    .FirstOrDefault();
+                if (newest != null)
+                    return modelEfforts[newest];
+            }
+
+            return effortLevel;
+        }
     }
 
     /// <summary>
@@ -210,5 +242,60 @@ namespace ClaudeHelper
 
         // Paths never contain quotes, so wrapping them in quotes is enough for cmd.exe.
         static string Quote(string value) => "\"" + value + "\"";
+
+        /// <summary>Claude Code's settings folder, normally .claude in the user's home folder.</summary>
+        public static string ConfigFolder
+        {
+            get
+            {
+                var folder = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+                return string.IsNullOrEmpty(folder)
+                    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude")
+                    : folder;
+            }
+        }
+
+        /// <summary>
+        /// The model and effort Claude Code picks on its own, read from its settings files the same way it layers them:
+        /// the user's settings, then the project's, then the project's local ones.
+        /// </summary>
+        static readonly Regex ModelEffortPattern =
+            new Regex(@"""(claude-[A-Za-z0-9.\-]+)""\s*:\s*\{[^{}]*?""effortLevel""\s*:\s*""([A-Za-z]+)""");
+
+        public static ClaudeDefaults ReadDefaults(string projectFolder)
+        {
+            var defaults = new ClaudeDefaults();
+            var files = new[]
+            {
+                Path.Combine(ConfigFolder, "settings.json"),
+                Path.Combine(projectFolder, ".claude", "settings.json"),
+                Path.Combine(projectFolder, ".claude", "settings.local.json"),
+            };
+
+            foreach (var file in files)
+            {
+                try
+                {
+                    if (!File.Exists(file))
+                        continue;
+                    var json = File.ReadAllText(file);
+                    var settings = JsonUtility.FromJson<ClaudeDefaults>(json);
+                    if (!string.IsNullOrEmpty(settings?.model))
+                        defaults.model = settings.model;
+                    if (!string.IsNullOrEmpty(settings?.effortLevel))
+                        defaults.effortLevel = settings.effortLevel;
+
+                    // JsonUtility can't read dictionaries, so find each "<model ID>": { ... "effortLevel": "..." } entry directly.
+                    foreach (Match match in ModelEffortPattern.Matches(json))
+                        defaults.modelEfforts[match.Groups[1].Value] = match.Groups[2].Value;
+                }
+                catch (Exception)
+                {
+                    // A settings file Claude Code can read but JsonUtility can't (comments, for example): skip it.
+                }
+            }
+
+            return defaults;
+        }
     }
 }

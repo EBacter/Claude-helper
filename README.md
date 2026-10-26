@@ -16,16 +16,16 @@ You don't need to install Claude Code yourself. The window does that for you (se
 In your Unity project, open **Window > Package Manager**, press **+**, choose **Install package from git URL...**, and paste:
 
 ```
-https://github.com/EBacter/claude-helper.git#v1.1.0
+https://github.com/EBacter/claude-helper.git#v1.2.0
 ```
 
 Or add this line to the `dependencies` in your project's `Packages/manifest.json`:
 
 ```json
-"com.local.claude-helper": "https://github.com/EBacter/claude-helper.git#v1.1.0",
+"com.local.claude-helper": "https://github.com/EBacter/claude-helper.git#v1.2.0",
 ```
 
-The `#v1.1.0` at the end pins a release, so your project only changes when you choose to update.
+The `#v1.2.0` at the end pins a release, so your project only changes when you choose to update.
 
 ## First run
 
@@ -40,6 +40,7 @@ The panel checks again when you come back to the window, then disappears. If you
 
 - Every question is sent with a short description of your Editor state: the open scene and its hierarchy, the selected object and its settings, and recent Console errors. You can see exactly what was sent under **Editor context sent with this question**.
 - Claude Code runs in your project folder with all its tools, settings, skills and MCP servers, in **auto mode**. Auto mode approves routine actions and blocks risky ones. Nobody can answer a permission prompt in the background, so anything that would need one is skipped and listed in the window. Use **Open in terminal** to continue the conversation where Claude can ask you first.
+- The pill at the top right shows which model answers and at what effort (for example **Opus · Medium effort**). Click it to change either one. Each answer also notes the model and effort that produced it.
 - Claude can change your project's files, so commit your work to version control often. That makes any change easy to undo.
 - Conversations are saved in the project's `UserSettings/ClaudeHelper` folder, which Unity's standard `.gitignore` doesn't commit.
 
